@@ -1,0 +1,512 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' https://cdnjs.cloudflare.com; style-src 'unsafe-inline'; img-src data:;">
+<title>Batch &amp; Expiry Tracker — v2.0</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  :root{
+    --bg:#f4f6f9; --card:#fff; --ink:#1f2d3d; --muted:#6b7a8c; --line:#e3e8ee;
+    --brand:#2563eb; --head:#1e293b;
+    --red:#c0392b; --red-bg:#fdecea; --amber:#b45309; --amber-bg:#fff4e0;
+    --green:#15803d; --green-bg:#e8f7ee; --gray:#8a96a3; --gray-bg:#eef1f4; --violet:#6d28d9; --violet-bg:#f1eafe;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;padding:20px;background:var(--bg);color:var(--ink);font-family:'Segoe UI',Tahoma,Arial,sans-serif;font-size:14px}
+  .wrap{max-width:1400px;margin:0 auto}
+  header{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;margin-bottom:16px}
+  h1{margin:0;font-size:22px}
+  h1 small{font-weight:500;color:var(--muted);font-size:13px;margin-left:6px}
+  .pills{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+  .pill{padding:4px 10px;border-radius:999px;font-size:12px;font-weight:600;background:var(--gray-bg);color:var(--muted)}
+  .pill.ok{background:var(--green-bg);color:var(--green)}
+  .pill.err{background:var(--red-bg);color:var(--red)}
+  .pill.busy{background:var(--amber-bg);color:var(--amber)}
+  button{font:inherit;cursor:pointer;border:0;border-radius:6px;padding:9px 16px;font-weight:600}
+  .btn-primary{background:var(--brand);color:#fff}
+  .btn-primary:disabled{opacity:.6;cursor:wait}
+  .btn-green{background:#16a34a;color:#fff}
+  .btn-ghost{background:#fff;border:1px solid var(--line);color:var(--ink)}
+  .card{background:var(--card);border-radius:10px;box-shadow:0 1px 3px rgba(0,0,0,.06);padding:16px;margin-bottom:16px}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin-bottom:16px}
+  .kpi{background:var(--card);border-radius:10px;padding:14px 16px;box-shadow:0 1px 3px rgba(0,0,0,.06);border-left:4px solid var(--brand)}
+  .kpi .l{color:var(--muted);font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.3px}
+  .kpi .v{font-size:26px;font-weight:700;margin-top:4px}
+  .kpi .s{color:var(--muted);font-size:12px;margin-top:2px}
+  .kpi.red{border-color:var(--red)} .kpi.amber{border-color:#f59e0b} .kpi.green{border-color:#16a34a} .kpi.violet{border-color:var(--violet)}
+  .grid2{display:grid;grid-template-columns:1fr 280px;gap:16px}
+  @media(max-width:800px){.grid2{grid-template-columns:1fr}}
+  .controls{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end}
+  .f{display:flex;flex-direction:column;gap:4px;min-width:170px;flex:1}
+  .f label{font-size:12px;font-weight:700;color:var(--muted)}
+  .f input,.f select{padding:8px 10px;border:1px solid #cfd6de;border-radius:6px;font:inherit;background:#fff}
+  .f input:focus,.f select:focus{outline:2px solid #bcd0fb;border-color:var(--brand)}
+  .tablewrap{overflow:auto;max-height:65vh;border:1px solid var(--line);border-radius:8px;margin-top:12px}
+  table{width:100%;border-collapse:collapse}
+  th,td{padding:10px 12px;text-align:left;border-bottom:1px solid var(--line);white-space:nowrap}
+  th{position:sticky;top:0;background:var(--head);color:#fff;cursor:pointer;user-select:none;font-weight:600;font-size:13px}
+  th .ar{opacity:.6;margin-left:4px;font-size:10px}
+  td.num,th.num{text-align:right}
+  tbody tr:hover{background:#f6f8fb}
+  tr.empty td{color:var(--gray);background:var(--gray-bg)}
+  tr.empty td.item{text-decoration:line-through}
+  .badge{display:inline-block;padding:3px 9px;border-radius:999px;font-size:12px;font-weight:700}
+  .b-expired{background:var(--red-bg);color:var(--red)}
+  .b-warning{background:var(--amber-bg);color:var(--amber)}
+  .b-valid{background:var(--green-bg);color:var(--green)}
+  .b-nodate{background:var(--gray-bg);color:var(--gray)}
+  .b-unmatched{background:var(--violet-bg);color:var(--violet)}
+  .neg{color:var(--red);font-weight:700}
+  .msg{padding:36px;text-align:center;color:var(--muted)}
+  .msg.err{color:var(--red)}
+  .note{color:var(--muted);font-size:12px;margin-top:10px;line-height:1.6}
+  .chartbox{position:relative;height:230px}
+  .hidden{display:none !important}
+  .sec{font-size:12px;color:var(--muted);margin-top:14px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <h1>📦 Batch &amp; Expiry Tracker <small>for Manager.io · v2.0 · GET · Read-Only 🔒</small></h1>
+    <div class="pills">
+      <span id="connPill" class="pill">Not connected</span>
+      <span id="originPill" class="pill hidden"></span>
+      <button id="loadBtn" class="btn-primary">⬇ Load All Records</button>
+    </div>
+  </header>
+
+  <div id="intro" class="card msg">Press <b>Load All Records</b> to fetch purchase and sales invoices from Manager.</div>
+
+  <div id="app" class="hidden">
+    <div class="kpis" id="kpis"></div>
+
+    <div class="card">
+      <div class="controls">
+        <div class="f" style="flex:2">
+          <label for="q">Search item / batch</label>
+          <input id="q" type="text" placeholder="Type item name or batch number…" autocomplete="off">
+        </div>
+        <div class="f">
+          <label for="fStatus">Expiry status</label>
+          <select id="fStatus">
+            <option value="all">All</option>
+            <option value="expired">Expired</option>
+            <option value="warning">Expiring soon</option>
+            <option value="valid">Valid</option>
+            <option value="nodate">No expiry date</option>
+            <option value="unmatched">No receipt found</option>
+          </select>
+        </div>
+        <div class="f">
+          <label for="fStock">Stock</label>
+          <select id="fStock">
+            <option value="all">All</option>
+            <option value="available">In stock only</option>
+            <option value="empty">Depleted (0)</option>
+            <option value="negative">Negative balance</option>
+          </select>
+        </div>
+        <div class="f" style="min-width:140px;flex:0">
+          <label for="fDays">“Soon” window</label>
+          <select id="fDays">
+            <option value="30" selected>30 days</option>
+            <option value="60">60 days</option>
+            <option value="90">90 days</option>
+            <option value="180">180 days</option>
+          </select>
+        </div>
+        <button id="exportBtn" class="btn-green">📥 Export CSV</button>
+      </div>
+      <div class="sec" id="countLine"></div>
+    </div>
+
+    <div class="grid2">
+      <div class="card" style="margin-bottom:0">
+        <div class="tablewrap">
+          <table id="tbl">
+            <thead><tr>
+              <th data-k="itemName">Item <span class="ar"></span></th>
+              <th data-k="batchNumber">Batch No. <span class="ar"></span></th>
+              <th data-k="expiry">Expiry date <span class="ar"></span></th>
+              <th data-k="qtyIn" class="num">Received (+) <span class="ar"></span></th>
+              <th data-k="qtyOut" class="num">Sold (−) <span class="ar"></span></th>
+              <th data-k="balance" class="num">Balance <span class="ar"></span></th>
+              <th data-k="days" class="num">Days left <span class="ar"></span></th>
+              <th data-k="status">Status <span class="ar"></span></th>
+            </tr></thead>
+            <tbody id="rows"></tbody>
+          </table>
+        </div>
+        <div class="note" id="footNote"></div>
+      </div>
+      <div class="card" style="margin-bottom:0">
+        <div style="font-weight:700;margin-bottom:8px">In-stock batches by status</div>
+        <div class="chartbox"><canvas id="chart"></canvas></div>
+        <div class="note" id="chartNote"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  /* ---------- Configuration (edit here) ---------- */
+  const CONFIG = {
+    purchasePath: '/api4/purchase-invoices',
+    salesPath: '/api4/sales-invoices',
+    batchField: 'Batch Number',   // custom-field name on invoice lines
+    expiryField: 'Expiry Date',   // custom-field name on purchase lines
+    requestTimeoutMs: 60000,
+    maxPages: 200
+  };
+
+  /* ---------- Security: read-only + endpoint whitelist ---------- */
+  const ALLOWED_PATHS = [CONFIG.purchasePath, CONFIG.salesPath];
+  function isAllowed(path) {
+    return typeof path === 'string' && ALLOWED_PATHS.indexOf(path.split('?')[0]) !== -1;
+  }
+  function toRelative(url) {
+    try { const u = new URL(url, 'https://x.invalid'); return u.pathname + u.search; }
+    catch (e) { return null; }
+  }
+  function esc(v) {
+    return String(v == null ? '' : v).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+
+  /* ---------- Bridge to Manager (origin-pinned postMessage) ---------- */
+  let lockedOrigin = null;
+
+  function bridgeGet(path) {
+    return new Promise(function (resolve, reject) {
+      if (!isAllowed(path)) return reject(new Error('Blocked: path not in allow-list'));
+      const requestId = (window.crypto && crypto.randomUUID) ? crypto.randomUUID()
+                        : Math.random().toString(36).slice(2) + Date.now();
+      const timer = setTimeout(function () {
+        window.removeEventListener('message', listener);
+        reject(new Error('Timed out waiting for Manager (' + path + ')'));
+      }, CONFIG.requestTimeoutMs);
+
+      function listener(ev) {
+        if (ev.source !== window.parent) return;                 // only the host frame
+        if (lockedOrigin && ev.origin !== lockedOrigin) return;  // origin pinned after first reply
+        const d = ev.data;
+        if (!d || d.requestId !== requestId) return;
+        clearTimeout(timer);
+        window.removeEventListener('message', listener);
+        if (!lockedOrigin && ev.origin) { lockedOrigin = ev.origin; showOrigin(); }
+        if (d.error || (typeof d.status === 'number' && d.status >= 400)) {
+          return reject(new Error('Manager returned an error for ' + path));
+        }
+        resolve(d.body);
+      }
+      window.addEventListener('message', listener);
+      window.parent.postMessage({ type: 'api-request', method: 'GET', path: path, requestId: requestId }, '*');
+    });
+  }
+
+  function toList(body) {
+    if (Array.isArray(body)) return body;
+    if (body && typeof body === 'object') {
+      for (const k of ['data', 'items', 'results', 'records']) if (Array.isArray(body[k])) return body[k];
+    }
+    return [];
+  }
+  function nextOf(body) {
+    if (body && !Array.isArray(body)) {
+      const n = body.next || body.nextPage || body.nextUrl;
+      if (typeof n === 'string') return n;
+    }
+    return null;
+  }
+  async function fetchAll(path, onPage) {
+    let all = [], cur = path, prev = null;
+    for (let i = 0; i < CONFIG.maxPages && cur; i++) {
+      const body = await bridgeGet(cur);
+      const list = toList(body);
+      all = all.concat(list);
+      if (onPage) onPage(all.length);
+      const n = nextOf(body);
+      prev = cur;
+      cur = n ? toRelative(n) : null;
+      if (!cur || cur === prev || !isAllowed(cur)) break;   // whitelist also guards injected next-page URLs
+    }
+    return all;
+  }
+
+  /* ---------- Data helpers ---------- */
+  function getField(line, name) {
+    const cf = line && line.customFields;
+    if (!cf || typeof cf !== 'object') return '';
+    if (cf[name] != null) return String(cf[name]).trim();
+    const k = Object.keys(cf).find(function (x) { return x.toLowerCase() === name.toLowerCase(); });
+    return k && cf[k] != null ? String(cf[k]).trim() : '';
+  }
+  function itemInfo(item) {
+    if (!item) return null;
+    if (typeof item === 'object') {
+      const id = item.id || item.key || item.name;
+      return id ? { id: String(id), name: item.name || String(id) } : null;
+    }
+    return { id: String(item), name: String(item) };
+  }
+  function parseDate(s) {
+    if (!s) return null;
+    let m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
+    if (m) return new Date(+m[1], +m[2] - 1, +m[3]);
+    m = /^(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{4})$/.exec(s);       // dd/mm/yyyy
+    if (m) return new Date(+m[3], +m[2] - 1, +m[1]);
+    const t = Date.parse(s);
+    if (isNaN(t)) return null;
+    const d = new Date(t); return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  }
+  function fmtDate(d) {
+    if (!d) return '—';
+    const p = function (n) { return String(n).padStart(2, '0'); };
+    return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+  }
+  const r6 = function (n) { return Math.round(n * 1e6) / 1e6; };
+  const fmtQty = function (n) { return Number(n).toLocaleString('en-US', { maximumFractionDigits: 3 }); };
+
+  /* ---------- State ---------- */
+  let rows = [];
+  let skipped = { purchase: 0, sales: 0 };
+  let sortKey = 'days', sortDir = 1;
+  let chart = null;
+
+  const $ = function (id) { return document.getElementById(id); };
+
+  function setConn(text, cls) {
+    const p = $('connPill'); p.textContent = text; p.className = 'pill ' + (cls || '');
+  }
+  function showOrigin() {
+    const p = $('originPill'); p.textContent = '🔒 Origin locked: ' + lockedOrigin; p.className = 'pill ok';
+  }
+
+  /* ---------- Build report ---------- */
+  function build(purchases, sales) {
+    const batches = {};
+    skipped = { purchase: 0, sales: 0 };
+
+    purchases.forEach(function (inv) {
+      (inv.lines || []).forEach(function (line) {
+        const it = itemInfo(line.item);
+        const batch = getField(line, CONFIG.batchField);
+        if (!it || !batch) { if (it) skipped.purchase++; return; }
+        const key = it.id + '||' + batch;
+        const qty = parseFloat(line.qty != null ? line.qty : line.quantity) || 0;
+        const exp = parseDate(getField(line, CONFIG.expiryField));
+        const b = batches[key] || (batches[key] = { itemName: it.name, batchNumber: batch, expiry: null, qtyIn: 0, qtyOut: 0 });
+        b.qtyIn += qty;
+        if (exp && (!b.expiry || exp < b.expiry)) b.expiry = exp;      // keep the earliest expiry (conservative)
+      });
+    });
+
+    sales.forEach(function (inv) {
+      (inv.lines || []).forEach(function (line) {
+        const it = itemInfo(line.item);
+        const batch = getField(line, CONFIG.batchField);
+        if (!it || !batch) { if (it) skipped.sales++; return; }
+        const key = it.id + '||' + batch;
+        const qty = parseFloat(line.qty != null ? line.qty : line.quantity) || 0;
+        const b = batches[key] || (batches[key] = { itemName: it.name, batchNumber: batch, expiry: null, qtyIn: 0, qtyOut: 0 });
+        b.qtyOut += qty;
+      });
+    });
+
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    rows = Object.keys(batches).map(function (k) {
+      const b = batches[k];
+      b.qtyIn = r6(b.qtyIn); b.qtyOut = r6(b.qtyOut);
+      b.balance = r6(b.qtyIn - b.qtyOut);
+      b.days = b.expiry ? Math.round((b.expiry - today) / 86400000) : null;
+      return b;
+    });
+  }
+
+  function statusOf(r, win) {
+    if (r.qtyIn === 0 && r.qtyOut > 0) return 'unmatched';
+    if (r.days == null) return 'nodate';
+    if (r.days < 0) return 'expired';
+    if (r.days <= win) return 'warning';
+    return 'valid';
+  }
+  const STATUS_TEXT = { expired: 'Expired', warning: 'Expiring soon', valid: 'Valid', nodate: 'No expiry date', unmatched: 'No receipt found' };
+
+  /* ---------- Filter / sort / render ---------- */
+  function current() {
+    const win = parseInt($('fDays').value, 10);
+    const q = $('q').value.trim().toLowerCase();
+    const fs = $('fStatus').value, fk = $('fStock').value;
+    const out = rows.map(function (r) { return Object.assign({}, r, { status: statusOf(r, win) }); })
+      .filter(function (r) {
+        if (q && (r.itemName + ' ' + r.batchNumber).toLowerCase().indexOf(q) === -1) return false;
+        if (fs !== 'all' && r.status !== fs) return false;
+        if (fk === 'available' && !(r.balance > 0)) return false;
+        if (fk === 'empty' && r.balance !== 0) return false;
+        if (fk === 'negative' && !(r.balance < 0)) return false;
+        return true;
+      });
+    const val = function (r) {
+      switch (sortKey) {
+        case 'expiry': return r.expiry ? r.expiry.getTime() : null;
+        case 'days': return r.days;
+        case 'status': return STATUS_TEXT[r.status];
+        case 'itemName': return r.itemName.toLowerCase();
+        case 'batchNumber': return String(r.batchNumber).toLowerCase();
+        default: return r[sortKey];
+      }
+    };
+    out.sort(function (a, b) {
+      const x = val(a), y = val(b);
+      if (x == null && y == null) return 0;
+      if (x == null) return 1;            // empty values always last
+      if (y == null) return -1;
+      return (x < y ? -1 : x > y ? 1 : 0) * sortDir;
+    });
+    return { list: out, win: win };
+  }
+
+  function renderKpis(win) {
+    const all = rows.map(function (r) { return Object.assign({}, r, { status: statusOf(r, win) }); });
+    const inStock = all.filter(function (r) { return r.balance > 0; });
+    const sum = function (a) { return r6(a.reduce(function (s, r) { return s + r.balance; }, 0)); };
+    const exp = inStock.filter(function (r) { return r.status === 'expired'; });
+    const soon = inStock.filter(function (r) { return r.status === 'warning'; });
+    const unm = all.filter(function (r) { return r.status === 'unmatched'; });
+    const neg = all.filter(function (r) { return r.balance < 0; });
+    const k = function (cls, label, val, sub) {
+      return '<div class="kpi ' + cls + '"><div class="l">' + esc(label) + '</div><div class="v">' + esc(val) +
+             '</div><div class="s">' + esc(sub) + '</div></div>';
+    };
+    $('kpis').innerHTML =
+      k('', 'Tracked batches', all.length, inStock.length + ' with stock') +
+      k('red', 'Expired with stock', exp.length, 'Qty on hand: ' + fmtQty(sum(exp))) +
+      k('amber', 'Expiring ≤ ' + win + ' days', soon.length, 'Qty on hand: ' + fmtQty(sum(soon))) +
+      k('green', 'Valid with stock', inStock.filter(function (r) { return r.status === 'valid'; }).length, 'Beyond ' + win + ' days') +
+      k('violet', 'Data issues', unm.length + neg.length, unm.length + ' no receipt · ' + neg.length + ' negative');
+  }
+
+  function renderChart(win) {
+    const note = $('chartNote');
+    if (typeof Chart === 'undefined') { note.textContent = 'Chart library unavailable (blocked or offline).'; return; }
+    note.textContent = '';
+    const inStock = rows.filter(function (r) { return r.balance > 0; }).map(function (r) { return statusOf(r, win); });
+    const keys = ['expired', 'warning', 'valid', 'nodate', 'unmatched'];
+    const colors = ['#c0392b', '#f59e0b', '#16a34a', '#94a3b8', '#7c3aed'];
+    const data = keys.map(function (s) { return inStock.filter(function (x) { return x === s; }).length; });
+    if (chart) chart.destroy();
+    chart = new Chart($('chart').getContext('2d'), {
+      type: 'doughnut',
+      data: { labels: keys.map(function (s) { return STATUS_TEXT[s]; }), datasets: [{ data: data, backgroundColor: colors }] },
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } }
+    });
+  }
+
+  function render() {
+    const res = current(), list = res.list;
+    renderKpis(res.win);
+    renderChart(res.win);
+
+    $('rows').innerHTML = list.map(function (r) {
+      const empty = r.balance <= 0 ? ' class="empty"' : '';
+      const days = r.days == null ? '—' : r.days;
+      return '<tr' + empty + '>' +
+        '<td class="item">' + esc(r.itemName) + '</td>' +
+        '<td>' + esc(r.batchNumber) + '</td>' +
+        '<td>' + fmtDate(r.expiry) + '</td>' +
+        '<td class="num">' + fmtQty(r.qtyIn) + '</td>' +
+        '<td class="num">' + fmtQty(r.qtyOut) + '</td>' +
+        '<td class="num' + (r.balance < 0 ? ' neg' : '') + '"><b>' + fmtQty(r.balance) + '</b></td>' +
+        '<td class="num">' + esc(days) + '</td>' +
+        '<td><span class="badge b-' + r.status + '">' + STATUS_TEXT[r.status] + '</span></td></tr>';
+    }).join('') || '<tr><td colspan="8" class="msg">No matching records</td></tr>';
+
+    $('countLine').textContent = 'Showing ' + list.length + ' of ' + rows.length + ' batches';
+    const ths = document.querySelectorAll('th[data-k]');
+    ths.forEach(function (th) {
+      th.querySelector('.ar').textContent = th.getAttribute('data-k') === sortKey ? (sortDir === 1 ? '▲' : '▼') : '';
+    });
+    const sk = skipped.purchase + skipped.sales;
+    $('footNote').textContent = sk
+      ? sk + ' invoice line(s) with an item but no “' + CONFIG.batchField + '” were skipped (' + skipped.purchase + ' purchase, ' + skipped.sales + ' sales).'
+      : '';
+  }
+
+  /* ---------- CSV export (current filtered view) ---------- */
+  function csvCell(v, isText) {
+    let s = String(v == null ? '' : v);
+    if (isText && /^[=+\-@\t\r]/.test(s)) s = "'" + s;   // block spreadsheet formula injection
+    return '"' + s.replace(/"/g, '""') + '"';
+  }
+  function exportCsv() {
+    const list = current().list;
+    const head = ['Item', 'Batch No.', 'Expiry date', 'Received', 'Sold', 'Balance', 'Days left', 'Status'];
+    const lines = [head.map(function (h) { return csvCell(h); }).join(',')];
+    list.forEach(function (r) {
+      lines.push([
+        csvCell(r.itemName, true), csvCell(r.batchNumber, true), csvCell(fmtDate(r.expiry)),
+        csvCell(r.qtyIn), csvCell(r.qtyOut), csvCell(r.balance),
+        csvCell(r.days == null ? '' : r.days), csvCell(STATUS_TEXT[r.status])
+      ].join(','));
+    });
+    const blob = new Blob(['\uFEFF' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'batch-expiry-' + fmtDate(new Date()) + '.csv';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 2000);
+  }
+
+  /* ---------- Load ---------- */
+  async function load() {
+    const btn = $('loadBtn');
+    btn.disabled = true; setConn('Loading…', 'busy');
+    $('intro').className = 'card msg'; $('intro').textContent = 'Fetching purchase and sales invoices…';
+    try {
+      let pc = 0, sc = 0;
+      const upd = function () { setConn('Loading… purchases ' + pc + ' · sales ' + sc, 'busy'); };
+      const res = await Promise.all([
+        fetchAll(CONFIG.purchasePath, function (n) { pc = n; upd(); }),
+        fetchAll(CONFIG.salesPath, function (n) { sc = n; upd(); })
+      ]);
+      build(res[0], res[1]);
+      $('intro').classList.add('hidden');
+      $('app').classList.remove('hidden');
+      setConn('Connected · ' + res[0].length + ' purchase / ' + res[1].length + ' sales invoices', 'ok');
+      render();
+    } catch (e) {
+      console.error(e);
+      setConn('Error', 'err');
+      $('intro').className = 'card msg err';
+      $('intro').textContent = 'Could not load data: ' + (e && e.message ? e.message : 'unknown error') +
+        '. Check that the extension is installed inside Manager and the custom-field names match.';
+    } finally {
+      btn.disabled = false; btn.textContent = '↻ Reload';
+    }
+  }
+
+  /* ---------- Wire up ---------- */
+  $('loadBtn').addEventListener('click', load);
+  $('exportBtn').addEventListener('click', exportCsv);
+  ['q'].forEach(function (id) { $(id).addEventListener('input', render); });
+  ['fStatus', 'fStock', 'fDays'].forEach(function (id) { $(id).addEventListener('change', render); });
+  document.querySelectorAll('th[data-k]').forEach(function (th) {
+    th.addEventListener('click', function () {
+      const k = th.getAttribute('data-k');
+      if (sortKey === k) sortDir = -sortDir; else { sortKey = k; sortDir = 1; }
+      render();
+    });
+  });
+})();
+</script>
+</body>
+</html>
